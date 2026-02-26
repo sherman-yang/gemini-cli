@@ -33,7 +33,6 @@ import {
   ValidationRequiredError,
   coreEvents,
   CoreEvent,
-  CoreToolCallStatus,
   buildUserSteeringHintPrompt,
   GeminiCliOperation,
   getPlanModeExitMessage,
@@ -63,7 +62,7 @@ import type {
   SlashCommandProcessorResult,
   HistoryItemModel,
 } from '../types.js';
-import { StreamingState, MessageType } from '../types.js';
+import { StreamingState, MessageType, CoreToolCallStatus } from '../types.js';
 import { isAtCommand, isSlashCommand } from '../utils/commandUtils.js';
 import { useShellCommandProcessor } from './shellCommandProcessor.js';
 import { handleAtCommand } from './atCommandProcessor.js';

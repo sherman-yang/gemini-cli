@@ -6,8 +6,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import { ToolCallStatus, mapCoreStatusToDisplayStatus } from '../../types.js';
+import {
+  ToolCallStatus,
+  mapCoreStatusToDisplayStatus,
+  CoreToolCallStatus,
+} from '../../types.js';
 import { CliSpinner } from '../CliSpinner.js';
+import { GeminiRespondingSpinner } from '../GeminiRespondingSpinner.js';
 import {
   SHELL_COMMAND_NAME,
   SHELL_NAME,
@@ -20,7 +25,6 @@ import {
   SHELL_TOOL_NAME,
   isCompletedAskUserTool,
   type ToolResultDisplay,
-  CoreToolCallStatus,
 } from '@google/gemini-cli-core';
 import { useInactivityTimer } from '../../hooks/useInactivityTimer.js';
 import { formatCommand } from '../../utils/keybindingUtils.js';
