@@ -16,6 +16,7 @@
 
 import type { Config } from '../../config/config.js';
 import { LocalAgentExecutor } from '../local-executor.js';
+import { safeJsonToMarkdown } from '../../utils/markdownUtils.js';
 import {
   BaseToolInvocation,
   type ToolResult,
@@ -134,6 +135,8 @@ export class BrowserAgentInvocation extends BaseToolInvocation<
 
       const output = await executor.run(this.params, signal);
 
+      const displayResult = safeJsonToMarkdown(output.result);
+
       const resultContent = `Browser agent finished.
 Termination Reason: ${output.terminate_reason}
 Result:
@@ -145,7 +148,7 @@ Browser Agent Finished
 Termination Reason: ${output.terminate_reason}
 
 Result:
-${output.result}
+${displayResult}
 `;
 
       return {
