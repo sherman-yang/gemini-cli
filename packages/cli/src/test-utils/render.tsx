@@ -536,6 +536,7 @@ const baseMockUiState = {
   currentModel: 'gemini-pro',
   terminalBackgroundColor: 'black' as const,
   cleanUiDetailsVisible: false,
+  constrainHeight: true,
   allowPlanMode: true,
   activePtyId: undefined,
   backgroundShells: new Map(),

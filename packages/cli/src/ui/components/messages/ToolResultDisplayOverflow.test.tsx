@@ -4,46 +4,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
 import { renderWithProviders } from '../../../test-utils/render.js';
 import { ToolResultDisplay } from './ToolResultDisplay.js';
 import { ToolGroupMessage } from './ToolGroupMessage.js';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  type AnsiOutput,
-  CoreToolCallStatus,
-  SHELL_COMMAND_NAME,
-} from '@google/gemini-cli-core';
-import {
-  StreamingState,
-  type IndividualToolCallDisplay,
-} from '../../types.js';
+import { describe, it, expect } from 'vitest';
+import { type AnsiOutput, CoreToolCallStatus } from '@google/gemini-cli-core';
+import { StreamingState, type IndividualToolCallDisplay } from '../../types.js';
 import { waitFor } from '../../../test-utils/async.js';
-
-// Mock UIStateContext partially
-const mockUseUIState = vi.fn();
-vi.mock('../../contexts/UIStateContext.js', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../../contexts/UIStateContext.js')>();
-  return {
-    ...actual,
-    useUIState: () => mockUseUIState(),
-  };
-});
-
-// Mock useAlternateBuffer
-const mockUseAlternateBuffer = vi.fn();
-vi.mock('../../hooks/useAlternateBuffer.js', () => ({
-  useAlternateBuffer: () => mockUseAlternateBuffer(),
-}));
+import { SHELL_COMMAND_NAME } from '../../constants.js';
 
 describe('ToolResultDisplay Overflow', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockUseUIState.mockReturnValue({ renderMarkdown: true });
-    mockUseAlternateBuffer.mockReturnValue(false);
-  });
-
   it('shows the head of the content when overflowDirection is bottom (string)', async () => {
     const content = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5';
     const { lastFrame, waitUntilReady, unmount } = renderWithProviders(
@@ -53,6 +23,7 @@ describe('ToolResultDisplay Overflow', () => {
         maxLines={3}
         overflowDirection="bottom"
       />,
+      { useAlternateBuffer: false },
     );
     await waitUntilReady();
     const output = lastFrame();
@@ -75,6 +46,7 @@ describe('ToolResultDisplay Overflow', () => {
         maxLines={3}
         overflowDirection="top"
       />,
+      { useAlternateBuffer: false },
     );
     await waitUntilReady();
     const output = lastFrame();
@@ -108,6 +80,7 @@ describe('ToolResultDisplay Overflow', () => {
         maxLines={3}
         overflowDirection="bottom"
       />,
+      { useAlternateBuffer: false },
     );
     await waitUntilReady();
     const output = lastFrame();
@@ -137,8 +110,6 @@ describe('ToolResultDisplay Overflow', () => {
         confirmationDetails: undefined,
       },
     ];
-
-    mockUseAlternateBuffer.mockReturnValue(true);
 
     const { lastFrame, waitUntilReady, unmount } = renderWithProviders(
       <ToolGroupMessage

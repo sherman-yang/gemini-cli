@@ -46,7 +46,7 @@ export function calculateToolContentMaxLines(options: {
       )
     : undefined;
 
-  if (maxLinesLimit) {
+  if (maxLinesLimit !== undefined) {
     contentHeight =
       contentHeight !== undefined
         ? Math.min(contentHeight, maxLinesLimit)
