@@ -5,13 +5,12 @@
  */
 
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
-import {
-  BaseDeclarativeTool,
-  BaseToolInvocation,
-  Kind,
-  type ToolInvocation,
-  type ToolResult,
+import type {
+  ToolInvocation,
+  ToolResult,
+  ReadManyFilesResult,
 } from './tools.js';
+import { BaseDeclarativeTool, BaseToolInvocation, Kind } from './tools.js';
 import { getErrorMessage } from '../utils/errors.js';
 import * as fsPromises from 'node:fs/promises';
 import * as path from 'node:path';
@@ -253,7 +252,9 @@ ${finalExclusionPatternsForDescription
       const errorMessage = `Error during file search: ${getErrorMessage(error)}`;
       return {
         llmContent: errorMessage,
-        returnDisplay: `## File Search Error\n\nAn error occurred while searching for files:\n\`\`\`\n${getErrorMessage(error)}\n\`\`\``,
+        returnDisplay: {
+          summary: `Error: ${getErrorMessage(error)}`,
+        },
         error: {
           message: errorMessage,
           type: ToolErrorType.READ_MANY_FILES_SEARCH_ERROR,
@@ -448,9 +449,19 @@ ${finalExclusionPatternsForDescription
         'No files matching the criteria were found or all were skipped.',
       );
     }
+
+    const returnDisplay: ReadManyFilesResult = {
+      summary: displayMessage.trim(),
+      files: processedFilesRelativePaths,
+      skipped: skippedFiles,
+      include: this.params.include,
+      excludes: effectiveExcludes,
+      targetDir: this.config.getTargetDir(),
+    };
+
     return {
       llmContent: contentParts,
-      returnDisplay: displayMessage.trim(),
+      returnDisplay,
     };
   }
 }
