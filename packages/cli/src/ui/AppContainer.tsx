@@ -1117,6 +1117,7 @@ Logging in with Google... Restarting Gemini CLI to continue.
     config.getGeminiClient(),
     historyManager.history,
     historyManager.addItem,
+    historyManager.addItems,
     config,
     settings,
     setDebugMessage,

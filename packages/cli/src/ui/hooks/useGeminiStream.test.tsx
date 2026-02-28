@@ -209,6 +209,7 @@ vi.mock('./useAlternateBuffer.js', () => ({
 // --- Tests for useGeminiStream Hook ---
 describe('useGeminiStream', () => {
   let mockAddItem = vi.fn();
+  let mockAddItems = vi.fn();
   let mockOnDebugMessage = vi.fn();
   let mockHandleSlashCommand = vi.fn().mockResolvedValue(false);
   let mockScheduleToolCalls: Mock;
@@ -301,6 +302,7 @@ describe('useGeminiStream', () => {
   beforeEach(() => {
     vi.clearAllMocks(); // Clear mocks before each test
     mockAddItem = vi.fn();
+    mockAddItems = vi.fn();
     mockOnDebugMessage = vi.fn();
     mockHandleSlashCommand = vi.fn().mockResolvedValue(false);
 
@@ -414,6 +416,7 @@ describe('useGeminiStream', () => {
           props.client,
           props.history,
           props.addItem,
+          mockAddItems,
           props.config,
           props.loadedSettings,
           props.onDebugMessage,
@@ -516,6 +519,7 @@ describe('useGeminiStream', () => {
         new MockedGeminiClientClass(mockConfig),
         [],
         mockAddItem,
+        mockAddItems,
         mockConfig,
         mockLoadedSettings,
         mockOnDebugMessage,
@@ -664,6 +668,7 @@ describe('useGeminiStream', () => {
         new MockedGeminiClientClass(mockConfig),
         [],
         mockAddItem,
+        mockAddItems,
         mockConfig,
         mockLoadedSettings,
         mockOnDebugMessage,
@@ -765,6 +770,7 @@ describe('useGeminiStream', () => {
         new MockedGeminiClientClass(mockConfig),
         [],
         mockAddItem,
+        mockAddItems,
         mockConfig,
         mockLoadedSettings,
         mockOnDebugMessage,
@@ -875,6 +881,7 @@ describe('useGeminiStream', () => {
         client,
         [],
         mockAddItem,
+        mockAddItems,
         mockConfig,
         mockLoadedSettings,
         mockOnDebugMessage,
@@ -1138,6 +1145,7 @@ describe('useGeminiStream', () => {
         client,
         [],
         mockAddItem,
+        mockAddItems,
         mockConfig,
         mockLoadedSettings,
         mockOnDebugMessage,
@@ -1255,6 +1263,7 @@ describe('useGeminiStream', () => {
         new MockedGeminiClientClass(mockConfig),
         [],
         mockAddItem,
+        mockAddItems,
         mockConfig,
         mockLoadedSettings,
         mockOnDebugMessage,
@@ -1393,6 +1402,7 @@ describe('useGeminiStream', () => {
           mockConfig.getGeminiClient(),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -1434,6 +1444,7 @@ describe('useGeminiStream', () => {
           mockConfig.getGeminiClient(),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -1840,6 +1851,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           () => {},
@@ -1920,6 +1932,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -1979,6 +1992,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(testConfig),
           [],
           mockAddItem,
+          mockAddItems,
           testConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -2248,6 +2262,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -2353,6 +2368,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -2543,6 +2559,12 @@ describe('useGeminiStream', () => {
       addItemOrder.push(`addItem:${item.type}`);
     });
 
+    mockAddItems.mockImplementation((items: any[]) => {
+      for (const item of items) {
+        addItemOrder.push(`addItem:${item.type}`);
+      }
+    });
+
     // We need to capture the onComplete callback from useToolScheduler
     mockUseToolScheduler.mockImplementation((onComplete) => {
       capturedOnComplete = onComplete;
@@ -2561,6 +2583,7 @@ describe('useGeminiStream', () => {
         new MockedGeminiClientClass(mockConfig),
         [],
         mockAddItem,
+        mockAddItems,
         mockConfig,
         mockLoadedSettings,
         vi.fn(),
@@ -2632,6 +2655,7 @@ describe('useGeminiStream', () => {
         mockConfig.getGeminiClient(),
         [],
         mockAddItem,
+        mockAddItems,
         mockConfig,
         mockLoadedSettings,
         mockOnDebugMessage,
@@ -2797,6 +2821,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           fullThinkingSettings,
           mockOnDebugMessage,
@@ -2898,6 +2923,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -2980,6 +3006,7 @@ describe('useGeminiStream', () => {
           mockConfig.getGeminiClient(),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -3051,6 +3078,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -3108,6 +3136,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
@@ -3176,6 +3205,7 @@ describe('useGeminiStream', () => {
           new MockedGeminiClientClass(mockConfig),
           [],
           mockAddItem,
+          mockAddItems,
           mockConfig,
           mockLoadedSettings,
           mockOnDebugMessage,
