@@ -310,6 +310,11 @@ describe('LocalAgentExecutor', () => {
     vi.useFakeTimers();
 
     mockConfig = makeFakeConfig();
+    // .config is already set correctly by the getter on the instance.
+    Object.defineProperty(mockConfig, 'promptId', {
+      get: () => 'test-prompt-id',
+      configurable: true,
+    });
     parentToolRegistry = new ToolRegistry(
       mockConfig,
       mockConfig.getMessageBus(),
@@ -385,7 +390,10 @@ describe('LocalAgentExecutor', () => {
 
     it('should use parentPromptId from context to create agentId', async () => {
       const parentId = 'parent-id';
-      mockedPromptIdContext.getStore.mockReturnValue(parentId);
+      Object.defineProperty(mockConfig, 'promptId', {
+        get: () => parentId,
+        configurable: true,
+      });
 
       const definition = createTestDefinition();
       const executor = await LocalAgentExecutor.create(
