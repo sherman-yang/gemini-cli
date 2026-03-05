@@ -606,7 +606,7 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
 
     let llmContent = '';
     let returnDisplay = '';
-    const needsRescue: string[] = [...privateUrls];
+    const needsRescue: string[] = [];
 
     if (publicUrls.length > 0) {
       const geminiClient = this.config.getGeminiClient();
@@ -619,7 +619,6 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
         );
 
         let responseText = getResponseText(response) || '';
-         
         const urlContextMeta = response.candidates?.[0]?.urlContextMetadata as
           | UrlContextMetadata
           | undefined;

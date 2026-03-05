@@ -463,7 +463,7 @@ describe('WebFetchTool', () => {
       expect(result.llmContent).toContain('rescued content');
     });
 
-    it('should rescue private URLs via fallback and merge with public results', async () => {
+    it('should NOT rescue private URLs via fallback but still fetch public ones', async () => {
       vi.mocked(fetchUtils.isPrivateIp).mockImplementation(
         (url) => url === 'https://private.com/',
       );
@@ -485,11 +485,6 @@ describe('WebFetchTool', () => {
         ],
       });
 
-      // Mock fallback fetch for the private URL
-      mockFetch('https://private.com/', {
-        text: () => Promise.resolve('private rescued content'),
-      });
-
       const tool = new WebFetchTool(mockConfig, bus);
       const params = {
         prompt: 'fetch https://public.com and https://private.com',
@@ -498,16 +493,16 @@ describe('WebFetchTool', () => {
       const result = await invocation.execute(new AbortController().signal);
 
       expect(result.llmContent).toContain('public content');
-      expect(result.llmContent).toContain('--- Rescued Content ---');
-      expect(result.llmContent).toContain('URL: https://private.com/');
-      expect(result.llmContent).toContain('private rescued content');
+      expect(result.llmContent).not.toContain('--- Rescued Content ---');
+      expect(result.llmContent).not.toContain('URL: https://private.com/');
     });
 
     it('should return WEB_FETCH_FALLBACK_FAILED on fallback fetch failure', async () => {
-      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(true);
-      mockFetch('https://private.ip/', new Error('fetch failed'));
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
+      mockGenerateContent.mockRejectedValue(new Error('primary fail'));
+      mockFetch('https://public.ip/', new Error('fallback fetch failed'));
       const tool = new WebFetchTool(mockConfig, bus);
-      const params = { prompt: 'fetch https://private.ip' };
+      const params = { prompt: 'fetch https://public.ip' };
       const invocation = tool.build(params);
       const result = await invocation.execute(new AbortController().signal);
       expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
