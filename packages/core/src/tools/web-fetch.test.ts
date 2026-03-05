@@ -419,6 +419,7 @@ describe('WebFetchTool', () => {
       expect(result.llmContent).toContain(
         '[Warning] The following URLs were skipped due to rate limiting: https://ratelimit-multi.com/',
       );
+      expect(result.returnDisplay).toContain('(1 URL(s) skipped)');
     });
 
     it('should rescue failed public URLs via fallback', async () => {
@@ -494,7 +495,10 @@ describe('WebFetchTool', () => {
 
       expect(result.llmContent).toContain('public content');
       expect(result.llmContent).not.toContain('--- Rescued Content ---');
-      expect(result.llmContent).not.toContain('URL: https://private.com/');
+      expect(result.llmContent).toContain(
+        '[Warning] The following URLs were skipped because they point to private IP addresses: https://private.com/',
+      );
+      expect(result.returnDisplay).toContain('(1 URL(s) skipped)');
     });
 
     it('should return WEB_FETCH_FALLBACK_FAILED on fallback fetch failure', async () => {
@@ -520,13 +524,6 @@ describe('WebFetchTool', () => {
 
     it('should log telemetry when falling back due to private IP', async () => {
       vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(true);
-      // Mock fetchWithTimeout to succeed so fallback proceeds
-      mockFetch('https://private.ip/', {
-        text: () => Promise.resolve('some content'),
-      });
-      mockGenerateContent.mockResolvedValue({
-        candidates: [{ content: { parts: [{ text: 'fallback response' }] } }],
-      });
 
       const tool = new WebFetchTool(mockConfig, bus);
       const params = { prompt: 'fetch https://private.ip' };
@@ -537,7 +534,9 @@ describe('WebFetchTool', () => {
         mockConfig,
         expect.any(WebFetchFallbackAttemptEvent),
       );
-      expect(WebFetchFallbackAttemptEvent).toHaveBeenCalledWith('private_ip');
+      expect(WebFetchFallbackAttemptEvent).toHaveBeenCalledWith(
+        'private_ip_skipped',
+      );
     });
 
     it('should log telemetry when falling back due to primary fetch failure', async () => {
@@ -1073,6 +1072,21 @@ describe('WebFetchTool', () => {
 
       expect(result.llmContent).toContain('Error: Invalid URL "not-a-url"');
       expect(result.error?.type).toBe(ToolErrorType.INVALID_TOOL_PARAMS);
+    });
+
+    it('should block private IP (experimental)', async () => {
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(true);
+      const tool = new WebFetchTool(mockConfig, bus);
+      const invocation = tool['createInvocation'](
+        { url: 'http://localhost' },
+        bus,
+      );
+      const result = await invocation.execute(new AbortController().signal);
+
+      expect(result.llmContent).toContain(
+        'Error: Access to private IP address http://localhost/ is not allowed.',
+      );
+      expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_PROCESSING_ERROR);
     });
   });
 });

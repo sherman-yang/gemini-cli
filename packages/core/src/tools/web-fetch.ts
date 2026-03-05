@@ -224,6 +224,9 @@ class WebFetchToolInvocation extends BaseToolInvocation<
     contentBudget: number,
   ): Promise<string> {
     const url = convertGithubUrlToRaw(urlStr);
+    if (isPrivateIp(url)) {
+      return `Error fetching ${url}: Access to private IP address is not allowed.`;
+    }
 
     try {
       const response = await retryWithBackoff(
@@ -444,6 +447,18 @@ ${aggregatedContent}
     // Convert GitHub blob URL to raw URL
     url = convertGithubUrlToRaw(url);
 
+    if (isPrivateIp(url)) {
+      const errorMessage = `Access to private IP address ${url} is not allowed.`;
+      return {
+        llmContent: `Error: ${errorMessage}`,
+        returnDisplay: `Error: ${errorMessage}`,
+        error: {
+          message: errorMessage,
+          type: ToolErrorType.WEB_FETCH_PROCESSING_ERROR,
+        },
+      };
+    }
+
     try {
       const response = await retryWithBackoff(
         async () => {
@@ -600,7 +615,7 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
     if (privateUrls.length > 0) {
       logWebFetchFallbackAttempt(
         this.config,
-        new WebFetchFallbackAttemptEvent('private_ip'),
+        new WebFetchFallbackAttemptEvent('private_ip_skipped'),
       );
     }
 
@@ -619,9 +634,14 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
         );
 
         let responseText = getResponseText(response) || '';
-        const urlContextMeta = response.candidates?.[0]?.urlContextMetadata as
-          | UrlContextMetadata
-          | undefined;
+        const rawUrlContextMeta = response.candidates?.[0]?.urlContextMetadata;
+        const urlContextMeta =
+          rawUrlContextMeta &&
+          typeof rawUrlContextMeta === 'object' &&
+          'urlMetadata' in rawUrlContextMeta &&
+          Array.isArray(rawUrlContextMeta.urlMetadata)
+            ? (rawUrlContextMeta as UrlContextMetadata)
+            : undefined;
         const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
         const sources = groundingMetadata?.groundingChunks as
           | GroundingChunkItem[]
@@ -749,13 +769,27 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
       }
     }
 
-    // Unit 2: Append rate limiting warning
+    // Unit 2: Append rate limiting and private IP warnings
+    const warnings: string[] = [];
     if (rateLimited.length > 0) {
-      const warning = `[Warning] The following URLs were skipped due to rate limiting: ${rateLimited.join(
-        ', ',
-      )}`;
-      llmContent = `${warning}\n\n${llmContent}`;
-      returnDisplay = `${returnDisplay} (Warning: ${rateLimited.length} URL(s) rate-limited)`;
+      warnings.push(
+        `[Warning] The following URLs were skipped due to rate limiting: ${rateLimited.join(
+          ', ',
+        )}`,
+      );
+    }
+    if (privateUrls.length > 0) {
+      warnings.push(
+        `[Warning] The following URLs were skipped because they point to private IP addresses: ${privateUrls.join(
+          ', ',
+        )}`,
+      );
+    }
+
+    if (warnings.length > 0) {
+      const combinedWarning = warnings.join('\n');
+      llmContent = `${combinedWarning}\n\n${llmContent}`;
+      returnDisplay = `${returnDisplay} (${rateLimited.length + privateUrls.length} URL(s) skipped)`;
     }
 
     return {
