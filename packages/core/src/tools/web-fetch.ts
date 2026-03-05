@@ -34,8 +34,8 @@ import { WEB_FETCH_DEFINITION } from './definitions/coreTools.js';
 import { resolveToolDeclaration } from './definitions/resolver.js';
 import { LRUCache } from 'mnemonist';
 
-const URL_FETCH_TIMEOUT_MS = 10000;
-const MAX_CONTENT_LENGTH = 100000;
+const URL_FETCH_TIMEOUT_MS = 30000;
+const MAX_CONTENT_LENGTH = 200000;
 const MAX_EXPERIMENTAL_FETCH_SIZE = 10 * 1024 * 1024; // 10MB
 const USER_AGENT =
   'Mozilla/5.0 (compatible; Google-Gemini-CLI/1.0; +https://github.com/google-gemini/gemini-cli)';
@@ -73,6 +73,31 @@ function checkRateLimit(url: string): {
   } catch (_e) {
     // If URL parsing fails, we fallback to allowed (should be caught by parsePrompt anyway)
     return { allowed: true };
+  }
+}
+
+/**
+ * Normalizes a URL by converting hostname to lowercase, removing trailing slashes,
+ * and removing default ports.
+ */
+export function normalizeUrl(urlStr: string): string {
+  try {
+    const url = new URL(urlStr);
+    url.hostname = url.hostname.toLowerCase();
+    // Remove trailing slash if present in pathname (except for root '/')
+    if (url.pathname.endsWith('/') && url.pathname.length > 1) {
+      url.pathname = url.pathname.slice(0, -1);
+    }
+    // Remove default ports
+    if (
+      (url.protocol === 'http:' && url.port === '80') ||
+      (url.protocol === 'https:' && url.port === '443')
+    ) {
+      url.port = '';
+    }
+    return url.href;
+  } catch {
+    return urlStr;
   }
 }
 
@@ -152,6 +177,15 @@ interface GroundingSupportItem {
   groundingChunkIndices?: number[];
 }
 
+interface UrlMetadata {
+  url?: string;
+  urlRetrievalStatus?: string;
+}
+
+interface UrlContextMetadata {
+  urlMetadata?: UrlMetadata[];
+}
+
 /**
  * Parameters for the WebFetch tool
  */
@@ -184,13 +218,12 @@ class WebFetchToolInvocation extends BaseToolInvocation<
     super(params, messageBus, _toolName, _toolDisplayName);
   }
 
-  private async executeFallback(signal: AbortSignal): Promise<ToolResult> {
-    const { validUrls: urls } = parsePrompt(this.params.prompt!);
-    // For now, we only support one URL for fallback
-    let url = urls[0];
-
-    // Convert GitHub blob URL to raw URL
-    url = convertGithubUrlToRaw(url);
+  private async executeFallbackForUrl(
+    urlStr: string,
+    signal: AbortSignal,
+    contentBudget: number,
+  ): Promise<string> {
+    const url = convertGithubUrlToRaw(urlStr);
 
     try {
       const response = await retryWithBackoff(
@@ -212,6 +245,7 @@ class WebFetchToolInvocation extends BaseToolInvocation<
         },
         {
           retryFetchErrors: this.config.getRetryFetchErrors(),
+          signal,
         },
       );
 
@@ -240,19 +274,39 @@ class WebFetchToolInvocation extends BaseToolInvocation<
         textContent = rawContent;
       }
 
-      textContent = truncateString(
-        textContent,
-        MAX_CONTENT_LENGTH,
-        TRUNCATION_WARNING,
-      );
+      return truncateString(textContent, contentBudget, TRUNCATION_WARNING);
+    } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+      const error = e as Error;
+      return `Error fetching ${url}: ${error.message}`;
+    }
+  }
 
+  private async executeFallback(
+    urls: string[],
+    signal: AbortSignal,
+  ): Promise<ToolResult> {
+    const contentBudget = Math.floor(MAX_CONTENT_LENGTH / urls.length);
+    const results: string[] = [];
+
+    for (const url of urls) {
+      results.push(
+        await this.executeFallbackForUrl(url, signal, contentBudget),
+      );
+    }
+
+    const aggregatedContent = results
+      .map((content, i) => `URL: ${urls[i]}\nContent:\n${content}`)
+      .join('\n\n---\n\n');
+
+    try {
       const geminiClient = this.config.getGeminiClient();
       const fallbackPrompt = `The user requested the following: "${this.params.prompt}".
 
-I was unable to access the URL directly. Instead, I have fetched the raw content of the page. Please use the following content to answer the request. Do not attempt to access the URL again.
+I was unable to access the URL(s) directly using the primary fetch tool. Instead, I have fetched the raw content of the page(s). Please use the following content to answer the request. Do not attempt to access the URL(s) again.
 
 ---
-${textContent}
+${aggregatedContent}
 ---
 `;
       const result = await geminiClient.generateContent(
@@ -264,12 +318,12 @@ ${textContent}
       const resultText = getResponseText(result) || '';
       return {
         llmContent: resultText,
-        returnDisplay: `Content for ${url} processed using fallback fetch.`,
+        returnDisplay: `Content for ${urls.length} URL(s) processed using fallback fetch.`,
       };
     } catch (e) {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       const error = e as Error;
-      const errorMessage = `Error during fallback fetch for ${url}: ${error.message}`;
+      const errorMessage = `Error during fallback processing: ${error.message}`;
       return {
         llmContent: `Error: ${errorMessage}`,
         returnDisplay: `Error: ${errorMessage}`,
@@ -405,6 +459,7 @@ ${textContent}
         },
         {
           retryFetchErrors: this.config.getRetryFetchErrors(),
+          signal,
         },
       );
 
@@ -510,15 +565,25 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
       return this.executeExperimental(signal);
     }
     const userPrompt = this.params.prompt!;
-    const { validUrls: urls } = parsePrompt(userPrompt);
-    const url = urls[0];
+    const { validUrls } = parsePrompt(userPrompt);
 
-    // Enforce rate limiting
-    const rateLimitResult = checkRateLimit(url);
-    if (!rateLimitResult.allowed) {
-      const waitTimeSecs = Math.ceil((rateLimitResult.waitTimeMs || 0) / 1000);
-      const errorMessage = `Rate limit exceeded for host. Please wait ${waitTimeSecs} seconds before trying again.`;
-      debugLogger.warn(`[WebFetchTool] Rate limit exceeded for ${url}`);
+    // Unit 1: Normalization & Deduplication
+    const allUrls = [...new Set(validUrls.map(normalizeUrl))];
+
+    // Unit 2: Isolated Rate Limiting
+    const toFetch: string[] = [];
+    const rateLimited: string[] = [];
+    for (const url of allUrls) {
+      const rateLimitResult = checkRateLimit(url);
+      if (rateLimitResult.allowed) {
+        toFetch.push(url);
+      } else {
+        rateLimited.push(url);
+      }
+    }
+
+    if (toFetch.length === 0 && rateLimited.length > 0) {
+      const errorMessage = `Rate limit exceeded for all requested hosts.`;
       return {
         llmContent: `Error: ${errorMessage}`,
         returnDisplay: `Error: ${errorMessage}`,
@@ -529,143 +594,175 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
       };
     }
 
-    const isPrivate = isPrivateIp(url);
+    const publicUrls = toFetch.filter((url) => !isPrivateIp(url));
+    const privateUrls = toFetch.filter((url) => isPrivateIp(url));
 
-    if (isPrivate) {
+    if (privateUrls.length > 0) {
       logWebFetchFallbackAttempt(
         this.config,
         new WebFetchFallbackAttemptEvent('private_ip'),
       );
-      return this.executeFallback(signal);
     }
 
-    const geminiClient = this.config.getGeminiClient();
+    let llmContent = '';
+    let returnDisplay = '';
+    const needsRescue: string[] = [...privateUrls];
 
-    try {
-      const response = await geminiClient.generateContent(
-        { model: 'web-fetch' },
-        [{ role: 'user', parts: [{ text: userPrompt }] }],
-        signal, // Pass signal
-        LlmRole.UTILITY_TOOL,
-      );
-
-      debugLogger.debug(
-        `[WebFetchTool] Full response for prompt "${userPrompt.substring(
-          0,
-          50,
-        )}...":`,
-        JSON.stringify(response, null, 2),
-      );
-
-      let responseText = getResponseText(response) || '';
-      const urlContextMeta = response.candidates?.[0]?.urlContextMetadata;
-      const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
-      const sources = groundingMetadata?.groundingChunks as
-        | GroundingChunkItem[]
-        | undefined;
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-      const groundingSupports = groundingMetadata?.groundingSupports as
-        | GroundingSupportItem[]
-        | undefined;
-
-      // Error Handling
-      let processingError = false;
-
-      if (
-        urlContextMeta?.urlMetadata &&
-        urlContextMeta.urlMetadata.length > 0
-      ) {
-        const allStatuses = urlContextMeta.urlMetadata.map(
-          (m) => m.urlRetrievalStatus,
+    if (publicUrls.length > 0) {
+      const geminiClient = this.config.getGeminiClient();
+      try {
+        const response = await geminiClient.generateContent(
+          { model: 'web-fetch' },
+          [{ role: 'user', parts: [{ text: userPrompt }] }],
+          signal,
+          LlmRole.UTILITY_TOOL,
         );
-        if (allStatuses.every((s) => s !== 'URL_RETRIEVAL_STATUS_SUCCESS')) {
+
+        let responseText = getResponseText(response) || '';
+         
+        const urlContextMeta = response.candidates?.[0]?.urlContextMetadata as
+          | UrlContextMetadata
+          | undefined;
+        const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
+        const sources = groundingMetadata?.groundingChunks as
+          | GroundingChunkItem[]
+          | undefined;
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+        const groundingSupports = groundingMetadata?.groundingSupports as
+          | GroundingSupportItem[]
+          | undefined;
+
+        // Error Handling & Rescue identification
+        let processingError = false;
+
+        if (
+          urlContextMeta?.urlMetadata &&
+          urlContextMeta.urlMetadata.length > 0
+        ) {
+          const allStatuses = urlContextMeta.urlMetadata.map(
+            (m) => m.urlRetrievalStatus,
+          );
+          if (allStatuses.every((s) => s !== 'URL_RETRIEVAL_STATUS_SUCCESS')) {
+            processingError = true;
+          }
+
+          // Unit 3: Identify specific URLs that need rescue
+          for (const meta of urlContextMeta.urlMetadata) {
+            if (
+              meta.urlRetrievalStatus !== 'URL_RETRIEVAL_STATUS_SUCCESS' &&
+              meta.url
+            ) {
+              needsRescue.push(meta.url);
+            }
+          }
+        } else if (!responseText.trim() && !sources?.length) {
           processingError = true;
         }
-      } else if (!responseText.trim() && !sources?.length) {
-        // No URL metadata and no content/sources
-        processingError = true;
-      }
 
-      if (
-        !processingError &&
-        !responseText.trim() &&
-        (!sources || sources.length === 0)
-      ) {
-        // Successfully retrieved some URL (or no specific error from urlContextMeta), but no usable text or grounding data.
-        processingError = true;
-      }
+        if (
+          !processingError &&
+          !responseText.trim() &&
+          (!sources || sources.length === 0)
+        ) {
+          processingError = true;
+        }
 
-      if (processingError) {
-        logWebFetchFallbackAttempt(
-          this.config,
-          new WebFetchFallbackAttemptEvent('primary_failed'),
-        );
-        return await this.executeFallback(signal);
-      }
+        if (processingError) {
+          logWebFetchFallbackAttempt(
+            this.config,
+            new WebFetchFallbackAttemptEvent('primary_failed'),
+          );
+          // If primary failed completely, rescue all public URLs that were supposed to be fetched
+          needsRescue.push(...publicUrls);
+        } else {
+          // Process grounding if successful
+          const sourceListFormatted: string[] = [];
+          if (sources && sources.length > 0) {
+            sources.forEach((source: GroundingChunkItem, index: number) => {
+              const title = source.web?.title || 'Untitled';
+              const uri = source.web?.uri || 'Unknown URI';
+              sourceListFormatted.push(`[${index + 1}] ${title} (${uri})`);
+            });
 
-      const sourceListFormatted: string[] = [];
-      if (sources && sources.length > 0) {
-        sources.forEach((source: GroundingChunkItem, index: number) => {
-          const title = source.web?.title || 'Untitled';
-          const uri = source.web?.uri || 'Unknown URI'; // Fallback if URI is missing
-          sourceListFormatted.push(`[${index + 1}] ${title} (${uri})`);
-        });
-
-        if (groundingSupports && groundingSupports.length > 0) {
-          const insertions: Array<{ index: number; marker: string }> = [];
-          groundingSupports.forEach((support: GroundingSupportItem) => {
-            if (support.segment && support.groundingChunkIndices) {
-              const citationMarker = support.groundingChunkIndices
-                .map((chunkIndex: number) => `[${chunkIndex + 1}]`)
-                .join('');
-              insertions.push({
-                index: support.segment.endIndex,
-                marker: citationMarker,
+            if (groundingSupports && groundingSupports.length > 0) {
+              const insertions: Array<{ index: number; marker: string }> = [];
+              groundingSupports.forEach((support: GroundingSupportItem) => {
+                if (support.segment && support.groundingChunkIndices) {
+                  const citationMarker = support.groundingChunkIndices
+                    .map((chunkIndex: number) => `[${chunkIndex + 1}]`)
+                    .join('');
+                  insertions.push({
+                    index: support.segment.endIndex,
+                    marker: citationMarker,
+                  });
+                }
               });
+
+              insertions.sort((a, b) => b.index - a.index);
+              const responseChars = responseText.split('');
+              insertions.forEach((insertion) => {
+                responseChars.splice(insertion.index, 0, insertion.marker);
+              });
+              responseText = responseChars.join('');
             }
-          });
 
-          insertions.sort((a, b) => b.index - a.index);
-          const responseChars = responseText.split('');
-          insertions.forEach((insertion) => {
-            responseChars.splice(insertion.index, 0, insertion.marker);
-          });
-          responseText = responseChars.join('');
+            if (sourceListFormatted.length > 0) {
+              responseText += `\n\nSources:\n${sourceListFormatted.join('\n')}`;
+            }
+          }
+          llmContent = responseText;
+          returnDisplay = `Content processed from prompt.`;
         }
+      } catch (error: unknown) {
+        debugLogger.error(
+          `[WebFetchTool] Primary fetch failed: ${getErrorMessage(error)}`,
+        );
+        needsRescue.push(...publicUrls);
+      }
+    }
 
-        if (sourceListFormatted.length > 0) {
-          responseText += `
+    // Unit 3: Surgical Fallback ("The Rescue")
+    if (needsRescue.length > 0) {
+      // Deduplicate needsRescue (public failures might overlap with private)
+      const uniqueRescue = [...new Set(needsRescue)];
+      const contentBudget = Math.floor(
+        MAX_CONTENT_LENGTH / uniqueRescue.length,
+      );
+      const rescuedResults: string[] = [];
 
-Sources:
-${sourceListFormatted.join('\n')}`;
-        }
+      for (const url of uniqueRescue) {
+        rescuedResults.push(
+          await this.executeFallbackForUrl(url, signal, contentBudget),
+        );
       }
 
-      const llmContent = responseText;
+      const aggregatedRescuedContent = rescuedResults
+        .map((content, i) => `URL: ${uniqueRescue[i]}\nContent:\n${content}`)
+        .join('\n\n---\n\n');
 
-      debugLogger.debug(
-        `[WebFetchTool] Formatted tool response for prompt "${userPrompt}:\n\n":`,
-        llmContent,
-      );
-
-      return {
-        llmContent,
-        returnDisplay: `Content processed from prompt.`,
-      };
-    } catch (error: unknown) {
-      const errorMessage = `Error processing web content for prompt "${userPrompt.substring(
-        0,
-        50,
-      )}...": ${getErrorMessage(error)}`;
-      return {
-        llmContent: `Error: ${errorMessage}`,
-        returnDisplay: `Error: ${errorMessage}`,
-        error: {
-          message: errorMessage,
-          type: ToolErrorType.WEB_FETCH_PROCESSING_ERROR,
-        },
-      };
+      if (!llmContent) {
+        // If no primary content, use executeFallback logic to process all rescued content via Gemini
+        return this.executeFallback(uniqueRescue, signal);
+      } else {
+        // If we have some primary content, append the rescued content as additional information
+        llmContent += `\n\n--- Rescued Content ---\n${aggregatedRescuedContent}`;
+        returnDisplay += ` (with ${uniqueRescue.length} rescued URL(s))`;
+      }
     }
+
+    // Unit 2: Append rate limiting warning
+    if (rateLimited.length > 0) {
+      const warning = `[Warning] The following URLs were skipped due to rate limiting: ${rateLimited.join(
+        ', ',
+      )}`;
+      llmContent = `${warning}\n\n${llmContent}`;
+      returnDisplay = `${returnDisplay} (Warning: ${rateLimited.length} URL(s) rate-limited)`;
+    }
+
+    return {
+      llmContent,
+      returnDisplay,
+    };
   }
 }
 
