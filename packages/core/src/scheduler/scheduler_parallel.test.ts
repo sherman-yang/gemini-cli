@@ -218,6 +218,8 @@ describe('Scheduler Parallel Execution', () => {
       getApprovalMode: vi.fn().mockReturnValue(ApprovalMode.DEFAULT),
     } as unknown as Mocked<Config>;
 
+    (mockConfig as unknown as { config: Config }).config = mockConfig as Config;
+
     mockMessageBus = {
       publish: vi.fn(),
       subscribe: vi.fn(),

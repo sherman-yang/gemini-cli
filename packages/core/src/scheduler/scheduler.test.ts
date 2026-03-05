@@ -176,6 +176,8 @@ describe('Scheduler (Orchestrator)', () => {
       getApprovalMode: vi.fn().mockReturnValue(ApprovalMode.DEFAULT),
     } as unknown as Mocked<Config>;
 
+    (mockConfig as unknown as { config: Config }).config = mockConfig as Config;
+
     mockMessageBus = {
       publish: vi.fn(),
       subscribe: vi.fn(),
@@ -1319,6 +1321,8 @@ describe('Scheduler MCP Progress', () => {
       setApprovalMode: vi.fn(),
       getApprovalMode: vi.fn().mockReturnValue(ApprovalMode.DEFAULT),
     } as unknown as Mocked<Config>;
+
+    (mockConfig as unknown as { config: Config }).config = mockConfig as Config;
 
     mockMessageBus = {
       publish: vi.fn(),
