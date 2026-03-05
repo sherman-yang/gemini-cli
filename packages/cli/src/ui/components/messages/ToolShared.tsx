@@ -12,7 +12,6 @@ import {
   CoreToolCallStatus,
 } from '../../types.js';
 import { CliSpinner } from '../CliSpinner.js';
-import { GeminiRespondingSpinner } from '../GeminiRespondingSpinner.js';
 import {
   SHELL_COMMAND_NAME,
   SHELL_NAME,
