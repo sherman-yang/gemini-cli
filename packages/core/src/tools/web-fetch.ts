@@ -575,6 +575,69 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
     }
   }
 
+  private applyGroundingSupport(
+    responseText: string,
+    groundingSupports: GroundingSupportItem[] | undefined,
+  ): string {
+    if (!groundingSupports || groundingSupports.length === 0) {
+      return responseText;
+    }
+
+    const insertions: Array<{ index: number; marker: string }> = [];
+    groundingSupports.forEach((support: GroundingSupportItem) => {
+      if (support.segment && support.groundingChunkIndices) {
+        const citationMarker = support.groundingChunkIndices
+          .map((chunkIndex: number) => `[${chunkIndex + 1}]`)
+          .join('');
+        insertions.push({
+          index: support.segment.endIndex,
+          marker: citationMarker,
+        });
+      }
+    });
+
+    insertions.sort((a, b) => b.index - a.index);
+    const responseChars = responseText.split('');
+    insertions.forEach((insertion) => {
+      responseChars.splice(insertion.index, 0, insertion.marker);
+    });
+    return responseChars.join('');
+  }
+
+  private formatSourceList(sources: GroundingChunkItem[] | undefined): string {
+    if (!sources || sources.length === 0) {
+      return '';
+    }
+
+    const sourceListFormatted: string[] = [];
+    sources.forEach((source: GroundingChunkItem, index: number) => {
+      const title = source.web?.title || 'Untitled';
+      const uri = source.web?.uri || 'Unknown URI';
+      sourceListFormatted.push(`[${index + 1}] ${title} (${uri})`);
+    });
+
+    return `\n\nSources:\n${sourceListFormatted.join('\n')}`;
+  }
+
+  private async aggregateRescuedContent(
+    urls: string[],
+    signal: AbortSignal,
+  ): Promise<string> {
+    const uniqueRescue = [...new Set(urls)];
+    const contentBudget = Math.floor(MAX_CONTENT_LENGTH / uniqueRescue.length);
+    const rescuedResults: string[] = [];
+
+    for (const url of uniqueRescue) {
+      rescuedResults.push(
+        await this.executeFallbackForUrl(url, signal, contentBudget),
+      );
+    }
+
+    return rescuedResults
+      .map((content, i) => `URL: ${uniqueRescue[i]}\nContent:\n${content}`)
+      .join('\n\n---\n\n');
+  }
+
   async execute(signal: AbortSignal): Promise<ToolResult> {
     if (this.config.getDirectWebFetch()) {
       return this.executeExperimental(signal);
@@ -642,6 +705,7 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
           Array.isArray(rawUrlContextMeta.urlMetadata)
             ? (rawUrlContextMeta as UrlContextMetadata)
             : undefined;
+
         const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
         const sources = groundingMetadata?.groundingChunks as
           | GroundingChunkItem[]
@@ -695,40 +759,12 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
           needsRescue.push(...publicUrls);
         } else {
           // Process grounding if successful
-          const sourceListFormatted: string[] = [];
-          if (sources && sources.length > 0) {
-            sources.forEach((source: GroundingChunkItem, index: number) => {
-              const title = source.web?.title || 'Untitled';
-              const uri = source.web?.uri || 'Unknown URI';
-              sourceListFormatted.push(`[${index + 1}] ${title} (${uri})`);
-            });
+          responseText = this.applyGroundingSupport(
+            responseText,
+            groundingSupports,
+          );
+          responseText += this.formatSourceList(sources);
 
-            if (groundingSupports && groundingSupports.length > 0) {
-              const insertions: Array<{ index: number; marker: string }> = [];
-              groundingSupports.forEach((support: GroundingSupportItem) => {
-                if (support.segment && support.groundingChunkIndices) {
-                  const citationMarker = support.groundingChunkIndices
-                    .map((chunkIndex: number) => `[${chunkIndex + 1}]`)
-                    .join('');
-                  insertions.push({
-                    index: support.segment.endIndex,
-                    marker: citationMarker,
-                  });
-                }
-              });
-
-              insertions.sort((a, b) => b.index - a.index);
-              const responseChars = responseText.split('');
-              insertions.forEach((insertion) => {
-                responseChars.splice(insertion.index, 0, insertion.marker);
-              });
-              responseText = responseChars.join('');
-            }
-
-            if (sourceListFormatted.length > 0) {
-              responseText += `\n\nSources:\n${sourceListFormatted.join('\n')}`;
-            }
-          }
           llmContent = responseText;
           returnDisplay = `Content processed from prompt.`;
         }
@@ -742,30 +778,18 @@ Response: ${truncateString(rawResponseText, 10000, '\n\n... [Error response trun
 
     // Unit 3: Surgical Fallback ("The Rescue")
     if (needsRescue.length > 0) {
-      // Deduplicate needsRescue (public failures might overlap with private)
-      const uniqueRescue = [...new Set(needsRescue)];
-      const contentBudget = Math.floor(
-        MAX_CONTENT_LENGTH / uniqueRescue.length,
+      const aggregatedRescuedContent = await this.aggregateRescuedContent(
+        needsRescue,
+        signal,
       );
-      const rescuedResults: string[] = [];
-
-      for (const url of uniqueRescue) {
-        rescuedResults.push(
-          await this.executeFallbackForUrl(url, signal, contentBudget),
-        );
-      }
-
-      const aggregatedRescuedContent = rescuedResults
-        .map((content, i) => `URL: ${uniqueRescue[i]}\nContent:\n${content}`)
-        .join('\n\n---\n\n');
 
       if (!llmContent) {
         // If no primary content, use executeFallback logic to process all rescued content via Gemini
-        return this.executeFallback(uniqueRescue, signal);
+        return this.executeFallback(needsRescue, signal);
       } else {
         // If we have some primary content, append the rescued content as additional information
         llmContent += `\n\n--- Rescued Content ---\n${aggregatedRescuedContent}`;
-        returnDisplay += ` (with ${uniqueRescue.length} rescued URL(s))`;
+        returnDisplay += ` (with ${needsRescue.length} rescued URL(s))`;
       }
     }
 
