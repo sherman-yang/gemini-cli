@@ -45,7 +45,7 @@ done
 Allow execution of: 'echo'?
 
 ● 1. Allow once               
-  2. Allow for this session
+  2. Allow for this session   Enter to select · ↑/↓ to navigate · Esc to cancel
   3. No, suggest changes (esc)
 "
 `;
