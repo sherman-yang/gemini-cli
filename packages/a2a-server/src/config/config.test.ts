@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'node:path';
 import { loadConfig } from './config.js';
-import type { Settings } from './settings.js';
+import type { LoadedSettings } from './settings.js';
 import {
   type ExtensionLoader,
   FileDiscoveryService,
@@ -40,6 +40,7 @@ vi.mock('@google/gemini-cli-core', async (importOriginal) => {
             },
           },
         }),
+        isTrustedFolder: vi.fn().mockReturnValue(true),
         getRemoteAdminSettings: vi.fn(),
         setRemoteAdminSettings: vi.fn(),
       };
@@ -72,13 +73,35 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 describe('loadConfig', () => {
-  const mockSettings = {} as Settings;
+  const mockLoadedSettings: LoadedSettings = {
+    userSettings: {},
+    workspaceSettings: {},
+  };
   const mockExtensionLoader = {} as ExtensionLoader;
   const taskId = 'test-task-id';
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
+
+    // Default mock implementation for Config to include isTrustedFolder
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (Config as any).mockImplementation((params: any) => ({
+      ...params,
+      initialize: vi.fn(),
+      waitForMcpInit: vi.fn(),
+      refreshAuth: vi.fn(),
+      getExperiments: vi.fn().mockReturnValue({
+        flags: {
+          [ExperimentFlags.ENABLE_ADMIN_CONTROLS]: {
+            boolValue: false,
+          },
+        },
+      }),
+      isTrustedFolder: vi.fn().mockReturnValue(true),
+      getRemoteAdminSettings: vi.fn(),
+      setRemoteAdminSettings: vi.fn(),
+    }));
   });
 
   afterEach(() => {
@@ -87,7 +110,7 @@ describe('loadConfig', () => {
 
   describe('admin settings overrides', () => {
     it('should not fetch admin controls if experiment is disabled', async () => {
-      await loadConfig(mockSettings, mockExtensionLoader, taskId);
+      await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
       expect(fetchAdminControlsOnce).not.toHaveBeenCalled();
     });
 
@@ -108,6 +131,7 @@ describe('loadConfig', () => {
                 },
               },
             }),
+            isTrustedFolder: vi.fn().mockReturnValue(true),
             getRemoteAdminSettings: vi.fn().mockReturnValue({}),
             setRemoteAdminSettings: vi.fn(),
           };
@@ -129,7 +153,7 @@ describe('loadConfig', () => {
         };
         vi.mocked(fetchAdminControlsOnce).mockResolvedValue(mockAdminSettings);
 
-        await loadConfig(mockSettings, mockExtensionLoader, taskId);
+        await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
 
         expect(Config).toHaveBeenLastCalledWith(
           expect.objectContaining({
@@ -150,7 +174,7 @@ describe('loadConfig', () => {
         };
         vi.mocked(fetchAdminControlsOnce).mockResolvedValue(mockAdminSettings);
 
-        await loadConfig(mockSettings, mockExtensionLoader, taskId);
+        await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
 
         expect(Config).toHaveBeenLastCalledWith(
           expect.objectContaining({
@@ -165,7 +189,7 @@ describe('loadConfig', () => {
         const mockAdminSettings: FetchAdminControlsResponse = {};
         vi.mocked(fetchAdminControlsOnce).mockResolvedValue(mockAdminSettings);
 
-        await loadConfig(mockSettings, mockExtensionLoader, taskId);
+        await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
 
         expect(Config).toHaveBeenLastCalledWith(expect.objectContaining({}));
       });
@@ -184,7 +208,7 @@ describe('loadConfig', () => {
         );
         vi.mocked(fetchAdminControlsOnce).mockResolvedValue(mockAdminSettings);
 
-        await loadConfig(mockSettings, mockExtensionLoader, taskId);
+        await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
 
         expect(fetchAdminControlsOnce).toHaveBeenCalledWith(
           mockCodeAssistServer,
@@ -204,7 +228,11 @@ describe('loadConfig', () => {
   it('should set customIgnoreFilePaths when CUSTOM_IGNORE_FILE_PATHS env var is present', async () => {
     const testPath = '/tmp/ignore';
     vi.stubEnv('CUSTOM_IGNORE_FILE_PATHS', testPath);
-    const config = await loadConfig(mockSettings, mockExtensionLoader, taskId);
+    const config = await loadConfig(
+      mockLoadedSettings,
+      mockExtensionLoader,
+      taskId,
+    );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((config as any).fileFiltering.customIgnoreFilePaths).toEqual([
       testPath,
@@ -213,12 +241,19 @@ describe('loadConfig', () => {
 
   it('should set customIgnoreFilePaths when settings.fileFiltering.customIgnoreFilePaths is present', async () => {
     const testPath = '/settings/ignore';
-    const settings: Settings = {
-      fileFiltering: {
-        customIgnoreFilePaths: [testPath],
+    const loadedSettings: LoadedSettings = {
+      userSettings: {
+        fileFiltering: {
+          customIgnoreFilePaths: [testPath],
+        },
       },
+      workspaceSettings: {},
     };
-    const config = await loadConfig(settings, mockExtensionLoader, taskId);
+    const config = await loadConfig(
+      loadedSettings,
+      mockExtensionLoader,
+      taskId,
+    );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((config as any).fileFiltering.customIgnoreFilePaths).toEqual([
       testPath,
@@ -229,12 +264,19 @@ describe('loadConfig', () => {
     const envPath = '/env/ignore';
     const settingsPath = '/settings/ignore';
     vi.stubEnv('CUSTOM_IGNORE_FILE_PATHS', envPath);
-    const settings: Settings = {
-      fileFiltering: {
-        customIgnoreFilePaths: [settingsPath],
+    const loadedSettings: LoadedSettings = {
+      userSettings: {
+        fileFiltering: {
+          customIgnoreFilePaths: [settingsPath],
+        },
       },
+      workspaceSettings: {},
     };
-    const config = await loadConfig(settings, mockExtensionLoader, taskId);
+    const config = await loadConfig(
+      loadedSettings,
+      mockExtensionLoader,
+      taskId,
+    );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((config as any).fileFiltering.customIgnoreFilePaths).toEqual([
       settingsPath,
@@ -245,13 +287,21 @@ describe('loadConfig', () => {
   it('should split CUSTOM_IGNORE_FILE_PATHS using system delimiter', async () => {
     const paths = ['/path/one', '/path/two'];
     vi.stubEnv('CUSTOM_IGNORE_FILE_PATHS', paths.join(path.delimiter));
-    const config = await loadConfig(mockSettings, mockExtensionLoader, taskId);
+    const config = await loadConfig(
+      mockLoadedSettings,
+      mockExtensionLoader,
+      taskId,
+    );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((config as any).fileFiltering.customIgnoreFilePaths).toEqual(paths);
   });
 
   it('should have empty customIgnoreFilePaths when both are missing', async () => {
-    const config = await loadConfig(mockSettings, mockExtensionLoader, taskId);
+    const config = await loadConfig(
+      mockLoadedSettings,
+      mockExtensionLoader,
+      taskId,
+    );
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((config as any).fileFiltering.customIgnoreFilePaths).toEqual([]);
   });
@@ -259,13 +309,16 @@ describe('loadConfig', () => {
   it('should initialize FileDiscoveryService with correct options', async () => {
     const testPath = '/tmp/ignore';
     vi.stubEnv('CUSTOM_IGNORE_FILE_PATHS', testPath);
-    const settings: Settings = {
-      fileFiltering: {
-        respectGitIgnore: false,
+    const loadedSettings: LoadedSettings = {
+      userSettings: {
+        fileFiltering: {
+          respectGitIgnore: false,
+        },
       },
+      workspaceSettings: {},
     };
 
-    await loadConfig(settings, mockExtensionLoader, taskId);
+    await loadConfig(loadedSettings, mockExtensionLoader, taskId);
 
     expect(FileDiscoveryService).toHaveBeenCalledWith(expect.any(String), {
       respectGitIgnore: false,
@@ -276,10 +329,13 @@ describe('loadConfig', () => {
 
   describe('tool configuration', () => {
     it('should pass V1 allowedTools to Config properly', async () => {
-      const settings: Settings = {
-        allowedTools: ['shell', 'edit'],
+      const loadedSettings: LoadedSettings = {
+        userSettings: {
+          allowedTools: ['shell', 'edit'],
+        },
+        workspaceSettings: {},
       };
-      await loadConfig(settings, mockExtensionLoader, taskId);
+      await loadConfig(loadedSettings, mockExtensionLoader, taskId);
       expect(Config).toHaveBeenCalledWith(
         expect.objectContaining({
           allowedTools: ['shell', 'edit'],
@@ -288,12 +344,15 @@ describe('loadConfig', () => {
     });
 
     it('should pass V2 tools.allowed to Config properly', async () => {
-      const settings: Settings = {
-        tools: {
-          allowed: ['shell', 'fetch'],
+      const loadedSettings: LoadedSettings = {
+        userSettings: {
+          tools: {
+            allowed: ['shell', 'fetch'],
+          },
         },
+        workspaceSettings: {},
       };
-      await loadConfig(settings, mockExtensionLoader, taskId);
+      await loadConfig(loadedSettings, mockExtensionLoader, taskId);
       expect(Config).toHaveBeenCalledWith(
         expect.objectContaining({
           allowedTools: ['shell', 'fetch'],
@@ -302,13 +361,16 @@ describe('loadConfig', () => {
     });
 
     it('should prefer V1 allowedTools over V2 tools.allowed if both present', async () => {
-      const settings: Settings = {
-        allowedTools: ['v1-tool'],
-        tools: {
-          allowed: ['v2-tool'],
+      const loadedSettings: LoadedSettings = {
+        userSettings: {
+          allowedTools: ['v1-tool'],
+          tools: {
+            allowed: ['v2-tool'],
+          },
         },
+        workspaceSettings: {},
       };
-      await loadConfig(settings, mockExtensionLoader, taskId);
+      await loadConfig(loadedSettings, mockExtensionLoader, taskId);
       expect(Config).toHaveBeenCalledWith(
         expect.objectContaining({
           allowedTools: ['v1-tool'],
@@ -316,10 +378,42 @@ describe('loadConfig', () => {
       );
     });
 
+    it('should pass agent settings to Config', async () => {
+      const loadedSettings: LoadedSettings = {
+        userSettings: {
+          experimental: {
+            enableAgents: false,
+          },
+          agents: {
+            overrides: {
+              test_agent: { enabled: true },
+            },
+          },
+        },
+        workspaceSettings: {},
+      };
+      await loadConfig(loadedSettings, mockExtensionLoader, taskId);
+      expect(Config).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enableAgents: false,
+          agents: loadedSettings.userSettings.agents,
+        }),
+      );
+    });
+
+    it('should default enableAgents to false if not specified (secure default)', async () => {
+      await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
+      expect(Config).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enableAgents: false,
+        }),
+      );
+    });
+
     describe('interactivity', () => {
       it('should set interactive true when not headless', async () => {
         vi.mocked(isHeadlessMode).mockReturnValue(false);
-        await loadConfig(mockSettings, mockExtensionLoader, taskId);
+        await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
         expect(Config).toHaveBeenCalledWith(
           expect.objectContaining({
             interactive: true,
@@ -330,7 +424,7 @@ describe('loadConfig', () => {
 
       it('should set interactive false when headless', async () => {
         vi.mocked(isHeadlessMode).mockReturnValue(true);
-        await loadConfig(mockSettings, mockExtensionLoader, taskId);
+        await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
         expect(Config).toHaveBeenCalledWith(
           expect.objectContaining({
             interactive: false,
@@ -369,12 +463,13 @@ describe('loadConfig', () => {
               waitForMcpInit: vi.fn(),
               refreshAuth: refreshAuthMock,
               getExperiments: vi.fn().mockReturnValue({ flags: {} }),
+              isTrustedFolder: vi.fn().mockReturnValue(true),
               getRemoteAdminSettings: vi.fn(),
               setRemoteAdminSettings: vi.fn(),
             }) as unknown as Config,
         );
 
-        await loadConfig(mockSettings, mockExtensionLoader, taskId);
+        await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
 
         expect(refreshAuthMock).toHaveBeenCalledWith(
           AuthType.LOGIN_WITH_GOOGLE,
@@ -399,13 +494,14 @@ describe('loadConfig', () => {
               waitForMcpInit: vi.fn(),
               refreshAuth: refreshAuthMock,
               getExperiments: vi.fn().mockReturnValue({ flags: {} }),
+              isTrustedFolder: vi.fn().mockReturnValue(true),
               getRemoteAdminSettings: vi.fn(),
               setRemoteAdminSettings: vi.fn(),
             }) as unknown as Config,
         );
 
         await expect(
-          loadConfig(mockSettings, mockExtensionLoader, taskId),
+          loadConfig(mockLoadedSettings, mockExtensionLoader, taskId),
         ).rejects.toThrow('Non-interactive session');
 
         expect(refreshAuthMock).toHaveBeenCalledWith(
@@ -428,12 +524,13 @@ describe('loadConfig', () => {
               waitForMcpInit: vi.fn(),
               refreshAuth: refreshAuthMock,
               getExperiments: vi.fn().mockReturnValue({ flags: {} }),
+              isTrustedFolder: vi.fn().mockReturnValue(true),
               getRemoteAdminSettings: vi.fn(),
               setRemoteAdminSettings: vi.fn(),
             }) as unknown as Config,
         );
 
-        await loadConfig(mockSettings, mockExtensionLoader, taskId);
+        await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
 
         expect(refreshAuthMock).not.toHaveBeenCalledWith(
           AuthType.LOGIN_WITH_GOOGLE,
@@ -455,12 +552,13 @@ describe('loadConfig', () => {
               waitForMcpInit: vi.fn(),
               refreshAuth: refreshAuthMock,
               getExperiments: vi.fn().mockReturnValue({ flags: {} }),
+              isTrustedFolder: vi.fn().mockReturnValue(true),
               getRemoteAdminSettings: vi.fn(),
               setRemoteAdminSettings: vi.fn(),
             }) as unknown as Config,
         );
 
-        await loadConfig(mockSettings, mockExtensionLoader, taskId);
+        await loadConfig(mockLoadedSettings, mockExtensionLoader, taskId);
 
         expect(refreshAuthMock).not.toHaveBeenCalledWith(
           AuthType.LOGIN_WITH_GOOGLE,
@@ -481,13 +579,14 @@ describe('loadConfig', () => {
               waitForMcpInit: vi.fn(),
               refreshAuth: refreshAuthMock,
               getExperiments: vi.fn().mockReturnValue({ flags: {} }),
+              isTrustedFolder: vi.fn().mockReturnValue(true),
               getRemoteAdminSettings: vi.fn(),
               setRemoteAdminSettings: vi.fn(),
             }) as unknown as Config,
         );
 
         await expect(
-          loadConfig(mockSettings, mockExtensionLoader, taskId),
+          loadConfig(mockLoadedSettings, mockExtensionLoader, taskId),
         ).rejects.toThrow(
           'Interactive terminal required for LOGIN_WITH_GOOGLE. Run in an interactive terminal or set GEMINI_CLI_USE_COMPUTE_ADC=true to use Application Default Credentials.',
         );
@@ -517,13 +616,14 @@ describe('loadConfig', () => {
               waitForMcpInit: vi.fn(),
               refreshAuth: refreshAuthMock,
               getExperiments: vi.fn().mockReturnValue({ flags: {} }),
+              isTrustedFolder: vi.fn().mockReturnValue(true),
               getRemoteAdminSettings: vi.fn(),
               setRemoteAdminSettings: vi.fn(),
             }) as unknown as Config,
         );
 
         await expect(
-          loadConfig(mockSettings, mockExtensionLoader, taskId),
+          loadConfig(mockLoadedSettings, mockExtensionLoader, taskId),
         ).rejects.toThrow(
           'OAuth failed. Fallback to COMPUTE_ADC also failed: ADC failed',
         );
